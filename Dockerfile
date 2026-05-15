@@ -1,73 +1,27 @@
 # syntax=docker/dockerfile:1.7
-################################################################################
+###############################################################################
 # robomp — orchestrator image
 #
-# This is a three-stage build. The `pi` build-context (declared via
-# `additional_contexts: pi: /work/pi` in docker-compose.yml) gives the builder
-# stages access to the host's `oh-my-pi` checkout *at build time*. At runtime
-# /work/pi is also mounted read-only so `omp` (the Bun shim) can execute the
-# coding-agent source directly. The Rust-built pi-natives .node addon, which
-# must be Linux-native, is produced here and dropped into /opt/bun/bin so the
-# pi loader finds it on next boot.
-################################################################################
-
-############################
-# 1) natives-builder — Rust+Bun, compiles pi-natives for the image's arch.
-############################
-FROM rust:1.86-slim-bookworm AS natives-builder
-
-ARG BUN_VERSION=1.3.14
-ENV BUN_INSTALL=/opt/bun \
-    PATH=/opt/bun/bin:/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin \
-    CARGO_TERM_COLOR=never
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        curl ca-certificates pkg-config libssl-dev unzip git \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" \
-    && /opt/bun/bin/bun --version
-
-# We need the pi checkout for the build, but copying the whole tree drags in
-# node_modules / runs / .fallow / etc. Use a bind mount to read the source
-# during the build; only the resulting .node file is copied out below.
+# Consumes pre-built artifacts from `oh-my-pi/artifacts:dev` (built separately
+# from /work/pi/Dockerfile, see `just pi-artifacts`):
 #
-# The `rust-toolchain.toml` at the repo root pins nightly; the `rustup show`
-# call inside the mount triggers the install on first build.
-RUN --mount=type=bind,from=pi,source=/,target=/pi,readonly \
-    --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
-    --mount=type=cache,target=/build/pi-src/target \
-    set -eux; \
-    mkdir -p /build /build/pi-src /out; \
-    cp -a /pi/. /build/pi-src/; \
-    cd /build/pi-src; \
-    rustup show; \
-    bun install --frozen-lockfile --ignore-scripts; \
-    bun --cwd=packages/natives run build; \
-    cp packages/natives/native/pi_natives.linux-*.node /out/
+#   - pi_natives.linux-<arch>.node → /opt/bun/bin/  (the pi loader probes here)
+#   - omp_rpc-*.whl                → pip install
+#
+# At runtime the full pi checkout is mounted read-only at /work/pi so `omp`
+# (the Bun shim below) executes the coding-agent source directly. The image
+# itself stays slim: no rust/bun compile, no pi source tree.
+###############################################################################
+
+ARG PI_ARTIFACTS_IMAGE=oh-my-pi/artifacts:dev
 
 ############################
-# 2) python-builder — wheel for omp-rpc from the pi checkout.
+# 1) pi-artifacts — pull the pre-built natives + omp-rpc wheel.
 ############################
-FROM python:3.12-slim-bookworm AS python-builder
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends git \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN pip install --upgrade pip build
-
-RUN --mount=type=bind,from=pi,source=/python/omp-rpc,target=/src,readonly \
-    set -eux; \
-    mkdir -p /build /out; \
-    cp -a /src /build/omp-rpc; \
-    cd /build/omp-rpc; \
-    python -m build --wheel --outdir /out
+FROM ${PI_ARTIFACTS_IMAGE} AS pi-artifacts
 
 ############################
-# 3) runtime — slim image, only what we actually need at boot.
+# 2) runtime — slim image with everything robomp needs at boot.
 ############################
 FROM python:3.12-slim-bookworm AS runtime
 
@@ -109,10 +63,10 @@ RUN curl -fsSL https://sh.rustup.rs -o /tmp/rustup-init.sh \
     && /usr/local/cargo/bin/rustup --version
 
 # pi-natives addon: pi's loader probes /opt/bun/bin as a fallback path.
-COPY --from=natives-builder /out/pi_natives.linux-*.node /opt/bun/bin/
+COPY --from=pi-artifacts /out/pi_natives.linux-*.node /opt/bun/bin/
 
-# omp-rpc Python wheel, installed at build time.
-COPY --from=python-builder /out/*.whl /tmp/wheels/
+# omp-rpc Python wheel.
+COPY --from=pi-artifacts /out/*.whl /tmp/wheels/
 RUN pip install /tmp/wheels/omp_rpc-*.whl && rm -rf /tmp/wheels
 
 WORKDIR /app

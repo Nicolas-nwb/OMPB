@@ -11,7 +11,7 @@ set dotenv-load     := true
 set dotenv-required := false
 
 PI_ROOT     := env_var_or_default("PI_ROOT", "/work/pi")
-STAGE       := env_var_or_default("STAGE", ".pi-context")
+PI_IMAGE    := env_var_or_default("PI_ARTIFACTS_IMAGE", "oh-my-pi/artifacts:dev")
 SERVICE     := "robomp"
 PORT        := env_var_or_default("ROBOMP_BIND_PORT", "8080")
 SQLITE_CONT := "/data/robomp.sqlite"
@@ -26,18 +26,19 @@ default:
 # ───────── build ─────────
 
 [group('build')]
-[doc('rsync $PI_ROOT into .pi-context/ — the docker build context')]
-stage:
-    PI_ROOT={{PI_ROOT}} ./bin/stage-pi.sh {{STAGE}}
+[doc('build the oh-my-pi artifacts image (pi-natives addon + omp-rpc wheel)')]
+pi-artifacts:
+    docker build -t {{PI_IMAGE}} {{PI_ROOT}}
 
 [group('build')]
-[doc('stage + docker compose build')]
-build: stage
+[doc('pi-artifacts + docker compose build')]
+build: pi-artifacts
     docker compose build
 
 [group('build')]
-[doc('stage + docker compose build --no-cache')]
-rebuild: stage
+[doc('pi-artifacts --no-cache + docker compose build --no-cache')]
+rebuild:
+    docker build --no-cache -t {{PI_IMAGE}} {{PI_ROOT}}
     docker compose build --no-cache
 
 [group('build')]
@@ -47,10 +48,10 @@ image-info:
       'size: {{{{.Size}}}} bytes  layers: {{{{len .RootFS.Layers}}}}  created: {{{{.Created}}}}'
 
 [group('build')]
-[confirm('Remove the staged build context directory?')]
-[doc('rm -rf .pi-context/')]
-clean-stage:
-    rm -rf {{STAGE}}
+[confirm('Remove the cached pi-artifacts image?')]
+[doc('docker image rm {{PI_IMAGE}}')]
+clean-pi-artifacts:
+    docker image rm {{PI_IMAGE}} || true
 
 # ───────── lifecycle ─────────
 
@@ -256,11 +257,11 @@ nuke-data:
     mkdir -p {{DATA_DIR}}
 
 [group('danger')]
-[confirm('Tear down the stack with -v and remove the staged build context. Continue?')]
-[doc('full reset: docker compose down -v + rm -rf .pi-context')]
+[confirm('Tear down the stack with -v and drop the pi-artifacts image. Continue?')]
+[doc('full reset: docker compose down -v + docker image rm {{PI_IMAGE}}')]
 reset:
     docker compose down -v
-    rm -rf {{STAGE}}
+    docker image rm {{PI_IMAGE}} || true
 
 # ───────── aliases ─────────
 

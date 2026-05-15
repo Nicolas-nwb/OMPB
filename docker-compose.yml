@@ -13,10 +13,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      additional_contexts:
-        # Built by `bin/stage-pi.sh` (rsynced pi checkout sans target/runs/...).
-        # The runtime mount below still points at the full $PI_ROOT.
-        pi: ./.pi-context
+      args:
+        # Tag of the pre-built artifacts image produced by `just pi-artifacts`
+        # (sources: /work/pi/Dockerfile). Override per-environment as needed.
+        PI_ARTIFACTS_IMAGE: oh-my-pi/artifacts:dev
     image: robomp:dev
     container_name: robomp
     # Phase B (graceful shutdown): gives the orchestrator at least
