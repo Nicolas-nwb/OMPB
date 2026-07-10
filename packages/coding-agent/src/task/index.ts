@@ -848,11 +848,25 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 						`Running background task ${agentId}...`,
 						buildDetails("running", ownJobId) as unknown as Record<string, unknown>,
 					);
+					const forwardSyncProgress: AgentToolUpdateCallback<TaskToolDetails> = async update => {
+						const nextProgress = update.details?.progress?.[0];
+						if (nextProgress) {
+							Object.assign(progress, nextProgress);
+							progress.recentTools = nextProgress.recentTools.slice();
+							progress.recentOutput = nextProgress.recentOutput.slice();
+						}
+						const updateText =
+							update.content.find(part => part.type === "text")?.text ?? `Running background task ${agentId}...`;
+						await reportProgress(
+							updateText,
+							buildDetails("running", ownJobId) as unknown as Record<string, unknown>,
+						);
+					};
 					const result = await this.#executeSync(
 						toolCallId,
 						spawnParams,
 						runSignal,
-						undefined,
+						forwardSyncProgress,
 						agentId,
 						progress.index,
 						true,
@@ -873,6 +887,11 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 					progress.extractedToolData = singleResult?.extractedToolData;
 					progress.retryFailure = singleResult?.retryFailure;
 					progress.retryState = undefined;
+					if (singleResult?.resolvedModel) {
+						progress.resolvedModel = singleResult.resolvedModel;
+					} else {
+						delete progress.resolvedModel;
+					}
 					onSettled?.(resultFailed);
 					const statusText = resultFailed
 						? `Background task ${agentId} failed.`

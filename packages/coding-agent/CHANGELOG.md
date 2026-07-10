@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed async task job rows omitting resolved subagent model and reasoning badges when `task.showResolvedModelBadge` is enabled. ([#5060](https://github.com/can1357/oh-my-pi/issues/5060))
+
 ## [16.3.15] - 2026-07-09
 
 ### Changed
